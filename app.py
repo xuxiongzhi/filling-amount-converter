@@ -10,6 +10,7 @@ from io import BytesIO
 import traceback
 import shutil
 import tempfile
+from PIL import Image as PILImage
 
 # 定义 log_message 函数
 def log_message(message):
@@ -18,21 +19,6 @@ def log_message(message):
         st.session_state.logs = []
     st.session_state.logs.append(message)
 
-# 调试环境信息
-log_message(f"Python 版本: {sys.version}")
-log_message(f"Streamlit 版本: {st.__version__}")
-log_message(f"Pandas 版本: {pd.__version__}")
-try:
-    import numpy
-    log_message(f"Numpy 版本: {numpy.__version__}")
-except ImportError:
-    log_message("Numpy 未安装")
-try:
-    import pyarrow
-    log_message(f"Pyarrow 版本: {pyarrow.__version__}")
-except ImportError:
-    log_message("Pyarrow 未安装")
-
 # 初始化 session_state
 if 'processing' not in st.session_state:
     st.session_state.processing = False
@@ -40,6 +26,25 @@ if 'output_path' not in st.session_state:
     st.session_state.output_path = None
 if 'logs' not in st.session_state:
     st.session_state.logs = []
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = False
+
+# 调试环境信息（仅初始化时记录）
+if not st.session_state.initialized:
+    log_message(f"Python 版本: {sys.version}")
+    log_message(f"Streamlit 版本: {st.__version__}")
+    log_message(f"Pandas 版本: {pd.__version__}")
+    try:
+        import numpy
+        log_message(f"Numpy 版本: {numpy.__version__}")
+    except ImportError:
+        log_message("Numpy 未安装")
+    try:
+        import pyarrow
+        log_message(f"Pyarrow 版本: {pyarrow.__version__}")
+    except ImportError:
+        log_message("Pyarrow 未安装")
+    st.session_state.initialized = True
 
 # 预编译正则表达式
 SIZE_REGEX = re.compile(r'^(XXS|XS|S|M|L|XL|2XL|3XL|4XL|5XL)$', re.IGNORECASE)
@@ -70,12 +75,19 @@ def extract_images_from_sheet_object(openpyxl_sheet_obj):
     if hasattr(openpyxl_sheet_obj, '_images') and openpyxl_sheet_obj._images:
         for img in openpyxl_sheet_obj._images:
             try:
-                img_bytes = BytesIO(img.data())
-                images_data.append({
-                    'data': img_bytes,
-                    'width': img.width,
-                    'height': img.height
-                })
+                # openpyxl 的 Image 对象没有 data 属性，使用 PIL 读取图片
+                if hasattr(img, 'ref') and img.ref:
+                    with PILImage.open(img.ref) as pil_img:
+                        # 转换为 PNG 格式保存到 BytesIO
+                        img_bytes = BytesIO()
+                        pil_img.save(img_bytes, format='PNG')
+                        images_data.append({
+                            'data': img_bytes,
+                            'width': img.width if hasattr(img, 'width') else pil_img.width,
+                            'height': img.height if hasattr(img, 'height') else pil_img.height
+                        })
+                else:
+                    log_message(f"图片缺少 ref 属性，无法提取")
             except Exception as img_err:
                 log_message(f"提取图片时出错: {img_err}")
     return images_data
@@ -191,7 +203,7 @@ def populate_output_sheet(worksheet, data, piece_name, sizes, max_index, images_
                     img.width = img_info['width']
                     img.height = img_info['height']
                 worksheet.add_image(img, f'A{current_row}')
-                rows_for_image = (img.height // 20 if img.height and img.height > 0 else 10) + 3
+                rows_for_image = (img_info['height'] // 20 if img_info['height'] and img_info['height'] > 0 else 10) + 3
                 current_row += max(5, rows_for_image)
             except Exception as e:
                 log_message(f"添加图片到工作表 '{worksheet.title}' 出错: {e}")
@@ -235,6 +247,7 @@ def process_file(input_path, output_path):
         if data and sorted_sizes and max_index > 0:
             any_sheet_transformed = True
             images = extract_images_from_sheet_object(ws)
+            log_message(f"工作表 '{sheet_name}' 提取到 {len(images)} 张图片")
             if ws.merged_cells.ranges:
                 for merged_range in list(ws.merged_cells.ranges):
                     try:
@@ -279,32 +292,35 @@ with log_container:
 
 uploaded_file = st.file_uploader("选择 Excel 文件", type=['xlsx', 'xls', 'xlsm'], key="file_uploader")
 
+# 处理上传的文件
 if uploaded_file and not st.session_state.processing:
     st.session_state.logs = []  # 清空日志
     st.session_state.processing = True
+    st.session_state.output_path = None  # 重置输出路径
     with st.spinner("正在处理文件..."):
         try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                input_path = os.path.join(tmp_dir, uploaded_file.name)
-                output_path = os.path.join(tmp_dir, f"{os.path.splitext(uploaded_file.name)[0]}_转换后.xlsx")
-                
-                # 保存上传文件
-                with open(input_path, 'wb') as f:
-                    f.write(uploaded_file.read())
-                
-                # 检查文件大小（限制 50MB）
-                max_size_mb = 50
-                if os.path.getsize(input_path) > max_size_mb * 1024 * 1024:
-                    log_message(f"文件大小超过 {max_size_mb}MB 限制")
-                    st.error(f"文件大小超过 {max_size_mb}MB 限制")
+            # 创建持久临时文件
+            temp_dir = tempfile.mkdtemp()
+            input_path = os.path.join(temp_dir, uploaded_file.name)
+            output_path = os.path.join(temp_dir, f"{os.path.splitext(uploaded_file.name)[0]}_转换后.xlsx")
+            
+            # 保存上传文件
+            with open(input_path, 'wb') as f:
+                f.write(uploaded_file.read())
+            
+            # 检查文件大小（限制 50MB）
+            max_size_mb = 50
+            if os.path.getsize(input_path) > max_size_mb * 1024 * 1024:
+                log_message(f"文件大小超过 {max_size_mb}MB 限制")
+                st.error(f"文件大小超过 {max_size_mb}MB 限制")
+            else:
+                # 处理文件
+                if process_file(input_path, output_path):
+                    st.session_state.output_path = output_path
+                    log_message("文件处理成功，请点击下方按钮下载结果")
+                    st.success("文件处理完成！")
                 else:
-                    # 处理文件
-                    if process_file(input_path, output_path):
-                        st.session_state.output_path = output_path
-                        log_message("文件处理成功，请点击下方按钮下载结果")
-                        st.success("文件处理完成！")
-                    else:
-                        st.error("文件处理失败，请检查日志")
+                    st.error("文件处理失败，请检查日志")
         except Exception as e:
             log_message(f"处理过程中发生错误: {e}")
             st.error(f"处理失败: {e}")
@@ -313,12 +329,17 @@ if uploaded_file and not st.session_state.processing:
             st.session_state.processing = False
 
 # 下载按钮
-if st.session_state.output_path and os.path.exists(st.session_state.output_path):
-    with open(st.session_state.output_path, 'rb') as f:
-        st.download_button(
-            label="下载处理结果",
-            data=f,
-            file_name=os.path.basename(st.session_state.output_path),
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            disabled=st.session_state.processing
-        )
+if st.session_state.output_path:
+    log_message(f"检查下载按钮: output_path={st.session_state.output_path}, exists={os.path.exists(st.session_state.output_path)}")
+    if os.path.exists(st.session_state.output_path):
+        with open(st.session_state.output_path, 'rb') as f:
+            st.download_button(
+                label="下载处理结果",
+                data=f,
+                file_name=os.path.basename(st.session_state.output_path),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                disabled=st.session_state.processing
+            )
+    else:
+        log_message("输出文件不存在，无法显示下载按钮")
+        st.error("输出文件已失效，请重新上传文件")
