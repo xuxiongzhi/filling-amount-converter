@@ -1,0 +1,1 @@
+uploads/ processed/ *.xlsx *.xls *.xlsm pycache/ *.pyc .env
