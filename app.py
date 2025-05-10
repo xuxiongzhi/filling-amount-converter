@@ -10,11 +10,23 @@ import traceback
 import shutil
 import tempfile
 
+# 初始化 session_state
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
+if 'output_path' not in st.session_state:
+    st.session_state.output_path = None
+if 'logs' not in st.session_state:
+    st.session_state.logs = []
+
 # 预编译正则表达式
 SIZE_REGEX = re.compile(r'^(XXS|XS|S|M|L|XL|2XL|3XL|4XL|5XL)$', re.IGNORECASE)
 PIECE_NAME_REGEX = re.compile(r'裁片名\s*[:：]\s*(\S+)')
 NUMERIC_INDEX_REGEX = re.compile(r'^\d+$')
 FILLING_AMOUNT_REGEX = re.compile(r'^\d*\.?\d+$')
+
+def log_message(message):
+    """记录日志到 session_state"""
+    st.session_state.logs.append(message)
 
 def make_unique_sheet_title(workbook, desired_title_base):
     """确保工作表名称唯一，符合 Excel 规范"""
@@ -46,7 +58,7 @@ def extract_images_from_sheet_object(openpyxl_sheet_obj):
                     'height': img.height
                 })
             except Exception as img_err:
-                st.warning(f"提取图片时出错: {img_err}")
+                log_message(f"提取图片时出错: {img_err}")
     return images_data
 
 def extract_data_from_dataframe(df):
@@ -76,7 +88,7 @@ def extract_data_from_dataframe(df):
             try:
                 filling_col = row_values.index('单片充绒量')
             except ValueError:
-                st.warning(f"表头中未找到'单片充绒量'，裁片 '{piece_name}' 无法处理")
+                log_message(f"表头中未找到'单片充绒量'，裁片 '{piece_name}' 无法处理")
                 return {}, piece_name, [], 0
             continue
         if header_found and row_values and row_values[0] and SIZE_REGEX.match(row_values[0]):
@@ -103,12 +115,12 @@ def extract_data_from_dataframe(df):
                             data[current_size] = {}
                         data[current_size][index] = filling_amount
             except Exception as e:
-                st.warning(f"处理数据行出错 (裁片: {piece_name}): {e}")
+                log_message(f"处理数据行出错 (裁片: {piece_name}): {e}")
 
     sorted_sizes = sorted(list(sizes), key=lambda x: (
         -100 if x == 'XXS' else -50 if x == 'XS' else 0 if x == 'S' else
         10 if x == 'M' else 20 if x == 'L' else 30 if x == 'XL' else
-        (int(x[0]) * 10 + 40) if x[0].isdigit() and x.upper().endswith('XL') else 100
+        (int(x[0]) *  "10 + 40) if x[0].isdigit() and x.upper().endswith('XL') else 100
     ))
     return data, piece_name, sorted_sizes, max_index
 
@@ -163,41 +175,41 @@ def populate_output_sheet(worksheet, data, piece_name, sizes, max_index, images_
                 rows_for_image = (img.height // 20 if img.height and img.height > 0 else 10) + 3
                 current_row += max(5, rows_for_image)
             except Exception as e:
-                st.warning(f"添加图片到工作表 '{worksheet.title}' 出错: {e}")
+                log_message(f"添加图片到工作表 '{worksheet.title}' 出错: {e}")
 
 def process_file(input_path, output_path):
     """处理 Excel 文件"""
     if not os.path.exists(input_path):
-        st.error(f"输入文件 '{input_path}' 不存在")
+        log_message(f"输入文件 '{input_path}' 不存在")
         return False
 
     if not input_path.lower().endswith(('.xlsx', '.xls', '.xlsm')):
-        st.warning(f"输入文件 '{input_path}' 不是 Excel 文件，可能无法正确处理")
+        log_message(f"输入文件 '{input_path}' 不是 Excel 文件，可能无法正确处理")
         return False
 
     try:
         shutil.copy2(input_path, output_path)
-        st.write(f"文件已复制到: {output_path}")
+        log_message(f"文件已复制到: {output_path}")
     except Exception as e:
-        st.error(f"复制文件出错: {e}")
+        log_message(f"复制文件出错: {e}")
         return False
 
     try:
         modified_workbook = load_workbook(output_path)
         original_sheet_names = modified_workbook.sheetnames
-        st.write(f"已打开文件，包含工作表: {original_sheet_names}")
+        log_message(f"已打开文件，包含工作表: {original_sheet_names}")
     except Exception as e:
-        st.error(f"打开文件失败: {e}")
+        log_message(f"打开文件失败: {e}")
         return False
 
     any_sheet_transformed = False
     for sheet_name in original_sheet_names:
-        st.write(f"\n处理工作表: {sheet_name}")
+        log_message(f"\n处理工作表: {sheet_name}")
         ws = modified_workbook[sheet_name]
         try:
             df = pd.read_excel(input_path, sheet_name=sheet_name, header=None)
         except Exception as e:
-            st.warning(f"无法读取工作表 '{sheet_name}' 数据: {e}")
+            log_message(f"无法读取工作表 '{sheet_name}' 数据: {e}")
             continue
 
         data, piece_name, sorted_sizes, max_index = extract_data_from_dataframe(df)
@@ -209,7 +221,7 @@ def process_file(input_path, output_path):
                     try:
                         ws.unmerge_cells(str(merged_range))
                     except Exception as e:
-                        st.warning(f"解除合并单元格 {merged_range} 失败: {e}")
+                        log_message(f"解除合并单元格 {merged_range} 失败: {e}")
             for row in range(1, ws.max_row + 1):
                 for col in range(1, ws.max_column + 1):
                     ws.cell(row=row, column=col).value = None
@@ -217,53 +229,81 @@ def process_file(input_path, output_path):
             if ws.title != new_title:
                 ws.title = new_title
             populate_output_sheet(ws, data, piece_name, sorted_sizes, max_index, images_to_add=images)
-            st.write(f"工作表 '{new_title}' 已更新")
+            log_message(f"工作表 '{new_title}' 已更新")
         else:
-            st.write(f"工作表 '{sheet_name}' 数据格式不符合要求，保持原样")
+            log_message(f"工作表 '{sheet_name}' 数据格式不符合要求，保持原样")
 
     if any_sheet_transformed:
-        st.success("至少有一个工作表被转换")
+        log_message("至少有一个工作表被转换")
     else:
-        st.info("没有工作表被转换，输出文件为原始副本")
+        log_message("没有工作表被转换，输出文件为原始副本")
 
     try:
         modified_workbook.save(output_path)
-        st.success(f"处理完成，输出文件: {output_path}")
+        log_message(f"处理完成，输出文件: {output_path}")
         return True
     except Exception as e:
-        st.error(f"保存文件失败: {e}")
+        log_message(f"保存文件失败: {e}")
         traceback.print_exc()
         return False
 
 # Streamlit 界面
 st.title("充绒量数据格式转换工具")
 st.markdown("上传 Excel 文件，转换充绒量数据格式后下载结果。支持多工作表和图片保留。")
+st.info("请上传 .xlsx, .xls 或 .xlsm 文件，最大 50MB。处理完成后点击下载按钮获取结果。")
 
-uploaded_file = st.file_uploader("选择 Excel 文件", type=['xlsx', 'xls', 'xlsm'])
+# 日志显示
+log_container = st.container()
+with log_container:
+    st.subheader("处理日志")
+    log_area = st.text_area("日志", value="", height=200, key="log_area", disabled=True)
 
-if uploaded_file:
+uploaded_file = st.file_uploader("选择 Excel 文件", type=['xlsx', 'xls', 'xlsm'], key="file_uploader")
+
+if uploaded_file and not st.session_state.processing:
+    st.session_state.logs = []  # 清空日志
+    st.session_state.processing = True
     with st.spinner("正在处理文件..."):
-        # 使用临时目录
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            input_path = os.path.join(tmp_dir, uploaded_file.name)
-            output_path = os.path.join(tmp_dir, f"{os.path.splitext(uploaded_file.name)[0]}_转换后.xlsx")
-            
-            # 保存上传文件
-            with open(input_path, 'wb') as f:
-                f.write(uploaded_file.read())
-            
-            # 检查文件大小（限制 50MB）
-            max_size_mb = 50
-            if os.path.getsize(input_path) > max_size_mb * 1024 * 1024:
-                st.error(f"文件大小超过 {max_size_mb}MB 限制")
-            else:
-                # 处理文件
-                if process_file(input_path, output_path):
-                    # 提供下载
-                    with open(output_path, 'rb') as f:
-                        st.download_button(
-                            label="下载处理结果",
-                            data=f,
-                            file_name=os.path.basename(output_path),
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                input_path = os.path.join(tmp_dir, uploaded_file.name)
+                output_path = os.path.join(tmp_dir, f"{os.path.splitext(uploaded_file.name)[0]}_转换后.xlsx")
+                
+                # 保存上传文件
+                with open(input_path, 'wb') as f:
+                    f.write(uploaded_file.read())
+                
+                # 检查文件大小（限制 50MB）
+                max_size_mb = 50
+                if os.path.getsize(input_path) > max_size_mb * 1024 * 1024:
+                    log_message(f"文件大小超过 {max_size_mb}MB 限制")
+                    st.error(f"文件大小超过 {max_size_mb}MB 限制")
+                else:
+                    # 处理文件
+                    if process_file(input_path, output_path):
+                        st.session_state.output_path = output_path
+                        log_message("文件处理成功，请点击下方按钮下载结果")
+                        st.success("文件处理完成！")
+                    else:
+                        st.error("文件处理失败，请检查日志")
+                
+                # 更新日志
+                log_area.value = "\n".join(st.session_state.logs)
+        except Exception as e:
+            log_message(f"处理过程中发生错误: {e}")
+            st.error(f"处理失败: {e}")
+            traceback.print_exc()
+        finally:
+            st.session_state.processing = False
+            log_area.value = "\n".join(st.session_state.logs)
+
+# 下载按钮
+if st.session_state.output_path and os.path.exists(st.session_state.output_path):
+    with open(st.session_state.output_path, 'rb') as f:
+        st.download_button(
+            label="下载处理结果",
+            data=f,
+            file_name=os.path.basename(st.session_state.output_path),
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            disabled=st.session_state.processing
+        )
