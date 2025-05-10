@@ -11,14 +11,14 @@ import traceback
 import shutil
 import tempfile
 
-# 定义 log_message 函数（移到顶部）
+# 定义 log_message 函数
 def log_message(message):
     """记录日志到 session_state"""
     if 'logs' not in st.session_state:
         st.session_state.logs = []
     st.session_state.logs.append(message)
 
-# 调试环境信息（在 log_message 定义后调用）
+# 调试环境信息
 log_message(f"Python 版本: {sys.version}")
 log_message(f"Streamlit 版本: {st.__version__}")
 log_message(f"Pandas 版本: {pd.__version__}")
@@ -275,7 +275,7 @@ st.info("请上传 .xlsx, .xls 或 .xlsm 文件，最大 50MB。处理完成后�
 log_container = st.container()
 with log_container:
     st.subheader("处理日志")
-    log_area = st.text_area("日志", value="\n".join(st.session_state.logs), height=200, key="log_area", disabled=True)
+    st.text_area("日志", value="\n".join(st.session_state.logs), height=200, key="log_area", disabled=True)
 
 uploaded_file = st.file_uploader("选择 Excel 文件", type=['xlsx', 'xls', 'xlsm'], key="file_uploader")
 
@@ -305,16 +305,12 @@ if uploaded_file and not st.session_state.processing:
                         st.success("文件处理完成！")
                     else:
                         st.error("文件处理失败，请检查日志")
-                
-                # 更新日志
-                log_area.value = "\n".join(st.session_state.logs)
         except Exception as e:
             log_message(f"处理过程中发生错误: {e}")
             st.error(f"处理失败: {e}")
             traceback.print_exc()
         finally:
             st.session_state.processing = False
-            log_area.value = "\n".join(st.session_state.logs)
 
 # 下载按钮
 if st.session_state.output_path and os.path.exists(st.session_state.output_path):
