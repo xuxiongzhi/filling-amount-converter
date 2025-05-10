@@ -188,7 +188,7 @@ def populate_output_sheet(worksheet, data, piece_name, sizes, max_index, images_
                     img.width = img_info['width']
                     img.height = img_info['height']
                 worksheet.add_image(img, f'A{current_row}')
-                rows_for_image = (සඎা (img.height // 20 if img.height and img.height > 0 else 10) + 3
+                rows_for_image = (img.height // 20 if img.height and img.height > 0 else 10) + 3
                 current_row += max(5, rows_for_image)
             except Exception as e:
                 log_message(f"添加图片到工作表 '{worksheet.title}' 出错: {e}")
