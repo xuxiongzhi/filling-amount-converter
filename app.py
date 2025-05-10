@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 import os
+import sys
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.drawing.image import Image as OpenpyxlImage
@@ -9,6 +10,21 @@ from io import BytesIO
 import traceback
 import shutil
 import tempfile
+
+# 调试环境信息
+log_message(f"Python 版本: {sys.version}")
+log_message(f"Streamlit 版本: {st.__version__}")
+log_message(f"Pandas 版本: {pd.__version__}")
+try:
+    import numpy
+    log_message(f"Numpy 版本: {numpy.__version__}")
+except ImportError:
+    log_message("Numpy 未安装")
+try:
+    import pyarrow
+    log_message(f"Pyarrow 版本: {pyarrow.__version__}")
+except ImportError:
+    log_message("Pyarrow 未安装")
 
 # 初始化 session_state
 if 'processing' not in st.session_state:
@@ -120,7 +136,7 @@ def extract_data_from_dataframe(df):
     sorted_sizes = sorted(list(sizes), key=lambda x: (
         -100 if x == 'XXS' else -50 if x == 'XS' else 0 if x == 'S' else
         10 if x == 'M' else 20 if x == 'L' else 30 if x == 'XL' else
-        (int(x[0]) *  "10 + 40) if x[0].isdigit() and x.upper().endswith('XL') else 100
+        (int(x[0]) * 10 + 40) if x[0].isdigit() and x.upper().endswith('XL') else 100
     ))
     return data, piece_name, sorted_sizes, max_index
 
@@ -172,7 +188,7 @@ def populate_output_sheet(worksheet, data, piece_name, sizes, max_index, images_
                     img.width = img_info['width']
                     img.height = img_info['height']
                 worksheet.add_image(img, f'A{current_row}')
-                rows_for_image = (img.height // 20 if img.height and img.height > 0 else 10) + 3
+                rows_for_image = (සඎা (img.height // 20 if img.height and img.height > 0 else 10) + 3
                 current_row += max(5, rows_for_image)
             except Exception as e:
                 log_message(f"添加图片到工作表 '{worksheet.title}' 出错: {e}")
@@ -207,7 +223,7 @@ def process_file(input_path, output_path):
         log_message(f"\n处理工作表: {sheet_name}")
         ws = modified_workbook[sheet_name]
         try:
-            df = pd.read_excel(input_path, sheet_name=sheet_name, header=None)
+            df = pd.read_excel(input_path, sheet_name=sheet_name, header=None, engine='openpyxl')
         except Exception as e:
             log_message(f"无法读取工作表 '{sheet_name}' 数据: {e}")
             continue
@@ -256,7 +272,7 @@ st.info("请上传 .xlsx, .xls 或 .xlsm 文件，最大 50MB。处理完成后�
 log_container = st.container()
 with log_container:
     st.subheader("处理日志")
-    log_area = st.text_area("日志", value="", height=200, key="log_area", disabled=True)
+    log_area = st.text_area("日志", value="\n".join(st.session_state.logs), height=200, key="log_area", disabled=True)
 
 uploaded_file = st.file_uploader("选择 Excel 文件", type=['xlsx', 'xls', 'xlsm'], key="file_uploader")
 
