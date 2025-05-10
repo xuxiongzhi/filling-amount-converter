@@ -11,7 +11,14 @@ import traceback
 import shutil
 import tempfile
 
-# 调试环境信息
+# 定义 log_message 函数（移到顶部）
+def log_message(message):
+    """记录日志到 session_state"""
+    if 'logs' not in st.session_state:
+        st.session_state.logs = []
+    st.session_state.logs.append(message)
+
+# 调试环境信息（在 log_message 定义后调用）
 log_message(f"Python 版本: {sys.version}")
 log_message(f"Streamlit 版本: {st.__version__}")
 log_message(f"Pandas 版本: {pd.__version__}")
@@ -39,10 +46,6 @@ SIZE_REGEX = re.compile(r'^(XXS|XS|S|M|L|XL|2XL|3XL|4XL|5XL)$', re.IGNORECASE)
 PIECE_NAME_REGEX = re.compile(r'裁片名\s*[:：]\s*(\S+)')
 NUMERIC_INDEX_REGEX = re.compile(r'^\d+$')
 FILLING_AMOUNT_REGEX = re.compile(r'^\d*\.?\d+$')
-
-def log_message(message):
-    """记录日志到 session_state"""
-    st.session_state.logs.append(message)
 
 def make_unique_sheet_title(workbook, desired_title_base):
     """确保工作表名称唯一，符合 Excel 规范"""
